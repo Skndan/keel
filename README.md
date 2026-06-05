@@ -41,12 +41,12 @@ pnpm install
 cp .env.example .env
 ```
 
-Edit `.env` and set these values:
+Edit `.env` and set:
 - `POSTGRES_PASSWORD` — database password
 - `JWT_SECRET` — random string for signing tokens
-- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — from [Google Cloud Console](https://console.cloud.google.com/)
-- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` — from [GitHub Developer Settings](https://github.com/settings/developers)
-- `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` / `R2_ENDPOINT` — from [Cloudflare Dashboard](https://dash.cloudflare.com/)
+- `ADMIN_EMAIL` / `ADMIN_PASSWORD` — dashboard login credentials
+
+> **OAuth and R2 are per-project.** When you create a project in the dashboard, you provide your own Google/GitHub OAuth keys and R2 credentials. Each project is fully isolated — no shared OAuth apps or storage buckets.
 
 ### Run (Development)
 
@@ -123,18 +123,23 @@ Cloudflare R2 — file storage (external, zero RAM)
 ## 💾 How Projects Work
 
 ```
-Login (OAuth) → Dashboard
-                    ↓
-            "Create Project" → "my-app"
-                    ↓
-            CREATE DATABASE keel_p_my_app
-            → Isolated schema, RLS, triggers
-            → API key + connection string
-                    ↓
-            Flutter SDK connects with:
-            projectSlug + apiKey
-                    ↓
-            POST /v1/project/my-app/db/query
+Login (admin email/pwd) → Dashboard
+                              ↓
+                  "Create Project" → "my-app"
+                  Provide per-project configs:
+                  • Google OAuth Client ID + Secret
+                  • GitHub OAuth Client ID + Secret
+                  • R2 Access Key + Secret + Bucket
+                              ↓
+                  CREATE DATABASE keel_p_my_app
+                  → Isolated schema, RLS, triggers
+                  → API key + connection string
+                              ↓
+                  Flutter SDK connects with:
+                  projectSlug + apiKey
+                              ↓
+                  End users authenticate via project's OAuth
+                  POST /v1/project/my-app/db/query
 ```
 
 ---
