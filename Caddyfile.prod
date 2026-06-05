@@ -1,0 +1,11 @@
+keel.skndan.com:80 {
+    handle_path /api/* {
+        reverse_proxy gateway:3000
+    }
+    handle_path /ws/* {
+        reverse_proxy realtime:3001
+    }
+    handle {
+        respond "Keel — see /api/v1/health"
+    }
+}

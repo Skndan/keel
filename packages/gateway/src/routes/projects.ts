@@ -63,6 +63,16 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
     const dbPassword = generateDbPassword();
     const { raw: apiKey, hash: apiKeyHash } = generateApiKey(slug);
 
+    // Create database + user OUTSIDE transaction
+    try {
+      await masterPool.query(`CREATE DATABASE "${dbName}"`);
+      await masterPool.query(`CREATE USER "${dbUser}" WITH PASSWORD '${dbPassword}'`);
+      await masterPool.query(`GRANT ALL PRIVILEGES ON DATABASE "${dbName}" TO "${dbUser}"`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to create database';
+      return reply.status(500).send({ error: { code: 'PROVISION_FAILED', message } });
+    }
+
     const client = await masterPool.connect();
 
     try {
@@ -75,15 +85,12 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
       );
       if (existing.length > 0) {
         await client.query('ROLLBACK');
+        await masterPool.query(`DROP DATABASE IF EXISTS "${dbName}"`);
+        await masterPool.query(`DROP USER IF EXISTS "${dbUser}"`);
         return reply.status(409).send({
           error: { code: 'CONFLICT', message: 'Project slug already exists' },
         });
       }
-
-      // Create database
-      await client.query(`CREATE DATABASE "${dbName}"`);
-      await client.query(`CREATE USER "${dbUser}" WITH PASSWORD '${dbPassword}'`);
-      await client.query(`GRANT ALL PRIVILEGES ON DATABASE "${dbName}" TO "${dbUser}"`);
 
       // Run template migration on the new database
       const templateUrl = new URL(
@@ -93,7 +100,7 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
       );
 
       await runMigrations({
-        connectionString: `postgresql://keel:${dbPassword}@localhost:5432/${dbName}`,
+        connectionString: `postgresql://keel:${encodeURIComponent(process.env.POSTGRES_PASSWORD || '')}@postgres:5432/${dbName}`,
         migrationsDir: TEMPLATE_DIR,
       });
 

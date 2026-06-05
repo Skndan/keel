@@ -1,104 +1,104 @@
-version: '3.9'
+name: keel
 
 services:
   postgres:
     image: postgres:16-alpine
     container_name: keel-postgres
-    restart: unless-stopped
     environment:
-      POSTGRES_USER: keel
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-keel_dev}
       POSTGRES_DB: keel_master
+      POSTGRES_USER: keel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-keel_dev}
     ports:
-      - '5432:5432'
+      - "127.0.0.1:6543:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./packages/db/migrations:/docker-entrypoint-initdb.d:ro
+      - keel_pg_data:/var/lib/postgresql/data
+      - ./packages/db/migrations:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U keel -d keel_master']
+      test: ["CMD-SHELL", "pg_isready -U keel -d keel_master"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
   gateway:
     build:
       context: .
       dockerfile: packages/gateway/Dockerfile
     container_name: keel-gateway
-    restart: unless-stopped
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      DATABASE_URL: postgresql://keel:${DB_PASSWORD:-keel_dev}@postgres:5432/keel_master
-      JWT_SECRET: ${JWT_SECRET}
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      BASE_URL: ${BASE_URL:-http://localhost}
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
-    ports:
-      - '3000:3000'
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://keel:${POSTGRES_PASSWORD:-keel_dev}@postgres:5432/keel_master
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-keel_dev}
+      JWT_SECRET: ${JWT_SECRET:-changeme}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-changeme}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@skndan.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
 
   realtime:
     build:
       context: .
       dockerfile: packages/realtime/Dockerfile
     container_name: keel-realtime
-    restart: unless-stopped
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      DATABASE_URL: postgresql://keel:${DB_PASSWORD:-keel_dev}@postgres:5432/keel_master
-      JWT_SECRET: ${JWT_SECRET}
-    ports:
-      - '3001:3001'
+      PORT: 3001
+      DATABASE_URL: postgres://keel:${POSTGRES_PASSWORD:-keel_dev}@postgres:5432/keel_master
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-keel_dev}
+      JWT_SECRET: ${JWT_SECRET:-changeme}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
 
   worker:
     build:
       context: .
       dockerfile: packages/worker/Dockerfile
     container_name: keel-worker
-    restart: unless-stopped
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      DATABASE_URL: postgresql://keel:${DB_PASSWORD:-keel_dev}@postgres:5432/keel_master
+      DATABASE_URL: postgres://keel:${POSTGRES_PASSWORD:-keel_dev}@postgres:5432/keel_master
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-keel_dev}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5302/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       postgres:
         condition: service_healthy
-
-  dashboard:
-    build:
-      context: .
-      dockerfile: packages/dashboard/Dockerfile
-    container_name: keel-dashboard
     restart: unless-stopped
-    ports:
-      - '3003:3003'
-    environment:
-      VITE_GATEWAY_URL: ${VITE_GATEWAY_URL:-http://localhost/v1}
-      VITE_WS_URL: ${VITE_WS_URL:-ws://localhost/ws}
 
   caddy:
     image: caddy:2-alpine
     container_name: keel-caddy
-    restart: unless-stopped
     ports:
-      - '80:80'
-      - '443:443'
+      - "80:80"
+      - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - gateway
-      - realtime
-      - dashboard
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - keel_caddy_data:/data
+      - keel_caddy_config:/config
+    restart: unless-stopped
 
 volumes:
-  pgdata:
-  caddy_data:
-  caddy_config:
+  keel_pg_data:
+  keel_caddy_data:
+  keel_caddy_config:
