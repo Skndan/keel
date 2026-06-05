@@ -114,7 +114,7 @@ Cloudflare R2 — file storage (external, zero RAM)
 | `db` | SQL | Migrations for master + per-project template |
 | `realtime` | Bun + WS | pg_notify-based subscriptions |
 | `worker` | Bun | Webhooks, scheduler, audit (single process) |
-| `dashboard` | Vite + React | Admin SPA |
+| `dashboard` | Vite + React + Tailwind | Admin SPA with login, project CRUD, table/storage/webhook browsers, settings |
 | `flutter-sdk` | Dart | Mobile client SDK |
 | `types` | TypeScript | Shared types |
 
@@ -150,7 +150,7 @@ Login (admin email/pwd) → Dashboard
 |---|---|---|
 | **v0.1 — Foundation** | Scaffold, Auth, Projects, Gateway | ✅ Done |
 | **v0.2 — Data Layer** | Realtime, Worker | 🚧 In Progress |
-| **v0.3 — Frontend** | Dashboard SPA, Flutter SDK | ⏳ Planned |
+| **v0.3 — Frontend** | Dashboard SPA, Flutter SDK | ✅ Done |
 
 ---
 
