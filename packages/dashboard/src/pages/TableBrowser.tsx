@@ -8,6 +8,13 @@ interface ColumnInfo {
   is_nullable: string;
 }
 
+interface ColumnDef {
+  name: string;
+  type: string;
+}
+
+const COLUMN_TYPES = ['TEXT', 'INTEGER', 'SERIAL', 'TIMESTAMPTZ', 'BOOLEAN', 'UUID', 'BIGINT', 'REAL'];
+
 export default function TableBrowser() {
   const { slug } = useParams<{ slug: string }>();
   const [tables, setTables] = useState<string[]>([]);
@@ -20,6 +27,12 @@ export default function TableBrowser() {
   const [insertMode, setInsertMode] = useState(false);
   const [sqlQuery, setSqlQuery] = useState('');
   const [showRawQuery, setShowRawQuery] = useState(false);
+
+  // Create Table state
+  const [showCreateTable, setShowCreateTable] = useState(false);
+  const [newTableName, setNewTableName] = useState('');
+  const [newColumns, setNewColumns] = useState<ColumnDef[]>([{ name: '', type: 'TEXT' }]);
+  const [creating, setCreating] = useState(false);
 
   const fetchTables = useCallback(async () => {
     if (!slug) return;
@@ -102,7 +115,6 @@ export default function TableBrowser() {
   const deleteRow = async (rowIndex: number) => {
     if (!slug || !selectedTable) return;
     const row = rows[rowIndex];
-    // Find a primary key-like column or use first column
     const firstCol = columns[0]?.column_name;
     if (!firstCol) return;
 
@@ -183,12 +195,64 @@ export default function TableBrowser() {
     }
   };
 
+  // ─── Create Table ────────────────────────────────────────
+
+  const addColumn = () => {
+    setNewColumns([...newColumns, { name: '', type: 'TEXT' }]);
+  };
+
+  const removeColumn = (index: number) => {
+    if (newColumns.length <= 1) return;
+    setNewColumns(newColumns.filter((_, i) => i !== index));
+  };
+
+  const updateColumn = (index: number, field: 'name' | 'type', value: string) => {
+    const cols = [...newColumns];
+    cols[index] = { ...cols[index], [field]: value };
+    setNewColumns(cols);
+  };
+
+  const createTable = async () => {
+    if (!slug || !newTableName.trim()) return;
+
+    const validColumns = newColumns.filter((c) => c.name.trim());
+    if (validColumns.length === 0) {
+      setError('Add at least one named column');
+      return;
+    }
+
+    const colDefs = validColumns
+      .map((c) => `"${c.name.trim()}" ${c.type}`)
+      .join(', ');
+
+    const sql = `CREATE TABLE IF NOT EXISTS "${newTableName.trim()}" (${colDefs})`;
+
+    setCreating(true);
+    setError(null);
+    try {
+      await api.post(`/project/${slug}/db/query`, { query: sql });
+      setShowCreateTable(false);
+      setNewTableName('');
+      setNewColumns([{ name: '', type: 'TEXT' }]);
+      fetchTables();
+    } catch (err) {
+      setError(err instanceof ApiClientError ? err.message : 'Failed to create table');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // ─── Render ──────────────────────────────────────────────
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Table Browser</h1>
 
       {error && (
-        <div className="bg-red-50 text-red-700 px-4 py-3 rounded mb-4 text-sm">{error}</div>
+        <div className="bg-red-50 text-red-700 px-4 py-3 rounded mb-4 text-sm">
+          {error}
+          <button onClick={() => setError(null)} className="ml-2 font-bold">&times;</button>
+        </div>
       )}
 
       {/* Raw SQL toggle */}
@@ -223,11 +287,19 @@ export default function TableBrowser() {
         {/* Table list */}
         <div className="w-56 flex-shrink-0">
           <div className="bg-white border border-gray-200 rounded-lg">
-            <div className="px-4 py-2 border-b bg-gray-50 font-medium text-sm text-gray-700">
-              Tables
+            <div className="px-4 py-2 border-b bg-gray-50 font-medium text-sm text-gray-700 flex items-center justify-between">
+              <span>Tables</span>
+              <button
+                onClick={() => setShowCreateTable(true)}
+                className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded hover:bg-blue-700"
+              >
+                + New
+              </button>
             </div>
             {tables.length === 0 ? (
-              <div className="px-4 py-3 text-sm text-gray-500">No tables</div>
+              <div className="px-4 py-3 text-sm text-gray-500">
+                {showCreateTable ? 'Create your first table below' : 'No tables'}
+              </div>
             ) : (
               tables.map((t) => (
                 <button
@@ -244,8 +316,83 @@ export default function TableBrowser() {
           </div>
         </div>
 
-        {/* Data view */}
+        {/* Main area */}
         <div className="flex-1 min-w-0">
+          {/* Create Table Modal */}
+          {showCreateTable && (
+            <div className="bg-white border border-blue-200 rounded-lg p-6 mb-6 shadow-lg">
+              <h2 className="text-lg font-semibold mb-4">Create New Table</h2>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Table Name</label>
+                <input
+                  value={newTableName}
+                  onChange={(e) => setNewTableName(e.target.value)}
+                  placeholder="e.g. users, posts"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  autoFocus
+                />
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Columns</label>
+                {newColumns.map((col, i) => (
+                  <div key={i} className="flex gap-2 mb-2 items-center">
+                    <input
+                      value={col.name}
+                      onChange={(e) => updateColumn(i, 'name', e.target.value)}
+                      placeholder="column_name"
+                      className="flex-1 px-3 py-1.5 border border-gray-300 rounded text-sm font-mono"
+                    />
+                    <select
+                      value={col.type}
+                      onChange={(e) => updateColumn(i, 'type', e.target.value)}
+                      className="px-3 py-1.5 border border-gray-300 rounded text-sm bg-white"
+                    >
+                      {COLUMN_TYPES.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => removeColumn(i)}
+                      disabled={newColumns.length <= 1}
+                      className="text-red-500 hover:text-red-700 text-sm px-2 disabled:opacity-30"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={addColumn}
+                  className="text-sm text-blue-600 hover:text-blue-800 mt-1"
+                >
+                  + Add Column
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={createTable}
+                  disabled={creating || !newTableName.trim()}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {creating ? 'Creating...' : 'Create Table'}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCreateTable(false);
+                    setNewTableName('');
+                    setNewColumns([{ name: '', type: 'TEXT' }]);
+                  }}
+                  className="bg-gray-200 px-4 py-2 rounded-md text-sm hover:bg-gray-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Data view */}
           {!selectedTable ? (
             <div className="text-center py-16 text-gray-500">Select a table to browse</div>
           ) : (
