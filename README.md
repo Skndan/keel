@@ -172,3 +172,56 @@ Runs comfortably on a **Hetzner CX22** (2GB RAM, ₹700/month).
 ## 📄 License
 
 MIT
+
+---
+
+## 🖥️ Deployment (Production)
+
+Keel is deployed on a Hetzner CX22 (2GB RAM) at **keel.skndan.com**.
+
+### Stack
+```
+Caddy (port 80) → Gateway (port 3000/internal)
+                → Realtime (port 3001/internal)
+                → Worker (port 3002/internal)
+PostgreSQL 16 (port 5432/internal)
+```
+
+### Environment
+Copy `.env.prod` and fill in:
+```bash
+cp .env.example .env.prod
+# Edit: POSTGRES_PASSWORD, JWT_SECRET, ENCRYPTION_KEY, ADMIN_EMAIL, ADMIN_PASSWORD
+```
+
+### Commands
+```bash
+# Build
+docker compose --env-file .env.prod build --no-cache
+
+# Start
+docker compose --env-file .env.prod up -d
+
+# Check
+curl keel.skndan.com/api/v1/health
+
+# Login
+curl -X POST keel.skndan.com/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"your-password"}'
+
+# Create project
+curl -X POST keel.skndan.com/api/v1/projects \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"my-app","google_client_id":"...","google_client_secret":"...","github_client_id":"...","github_client_secret":"...","r2_access_key_id":"...","r2_secret_access_key":"...","r2_bucket":"my-bucket","r2_endpoint":"https://xxx.r2.cloudflarestorage.com"}'
+```
+
+### Known Deployment Issues
+
+| Issue | Status | Workaround |
+|---|---|---|
+| PostgreSQL `pgmq` extension not in default Alpine image | 🟡 Worker can't process webhook/audit queue | Install pgmQ binary or rebuild worker to use `SELECT FOR UPDATE SKIP LOCKED` |
+| `CREATE DATABASE` fails in transaction | ✅ Fixed — moved to pre-transaction step | Use `psql -d postgres` for manual DB drops |
+| Caddy auto-HTTPS fails if DNS not propagated | ✅ Fixed — HTTP-only until Let's Encrypt validates | Wait for DNS propagation then enable TLS |
+| Gateway Docker healthcheck may fail | 🟡 `wget` not in Bun image | External health check passes; cosmetic only |
