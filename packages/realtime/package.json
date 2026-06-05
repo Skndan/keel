@@ -1,0 +1,25 @@
+{
+  "name": "@keel/realtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@keel/db": "workspace:*",
+    "@keel/types": "workspace:*",
+    "jose": "^5.8.0",
+    "pg": "^8.13.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.5.0"
+  }
+}

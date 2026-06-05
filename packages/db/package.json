@@ -1,0 +1,21 @@
+{
+  "name": "@keel/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "bun test",
+    "migrate": "bun run src/runner.ts",
+    "init": "bun run src/init.ts"
+  },
+  "dependencies": {
+    "@keel/types": "workspace:*",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.5.0"
+  }
+}

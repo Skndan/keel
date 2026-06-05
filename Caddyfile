@@ -1,0 +1,25 @@
+{
+    auto_https off
+}
+
+:80 {
+    # Gateway API routes
+    handle /api/* {
+        reverse_proxy gateway:3000
+    }
+
+    # Realtime WebSocket routes
+    handle /ws/* {
+        reverse_proxy realtime:3001
+    }
+
+    # Dashboard static files (catch-all)
+    handle {
+        reverse_proxy dashboard:3003
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}

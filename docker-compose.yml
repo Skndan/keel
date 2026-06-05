@@ -1,0 +1,110 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: keel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: keel
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-keel_dev}
+      POSTGRES_DB: keel_master
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./packages/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U keel -d keel_master']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    build:
+      context: .
+      dockerfile: packages/gateway/Dockerfile
+    container_name: keel-gateway
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgresql://keel:${DB_PASSWORD:-keel_dev}@postgres:5432/keel_master
+      JWT_SECRET: ${JWT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+      R2_BUCKET: ${R2_BUCKET:-keel-storage}
+      R2_PUBLIC_URL: ${R2_PUBLIC_URL}
+      BASE_URL: ${BASE_URL:-http://localhost}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  realtime:
+    build:
+      context: .
+      dockerfile: packages/realtime/Dockerfile
+    container_name: keel-realtime
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgresql://keel:${DB_PASSWORD:-keel_dev}@postgres:5432/keel_master
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - '3001:3001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: packages/worker/Dockerfile
+    container_name: keel-worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgresql://keel:${DB_PASSWORD:-keel_dev}@postgres:5432/keel_master
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: packages/dashboard/Dockerfile
+    container_name: keel-dashboard
+    restart: unless-stopped
+    ports:
+      - '3003:3003'
+    environment:
+      VITE_GATEWAY_URL: ${VITE_GATEWAY_URL:-http://localhost/v1}
+      VITE_WS_URL: ${VITE_WS_URL:-ws://localhost/ws}
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: keel-caddy
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - gateway
+      - realtime
+      - dashboard
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
