@@ -10,3 +10,12 @@ build/
 coverage/
 .turbo/
 *.tsbuildinfo
+USER.md
+backlog/
+logs/
+AGENTS.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
