@@ -34,7 +34,7 @@ export async function registerQueryRoutes(app: FastifyInstance): Promise<void> {
 
       // Whitelist: only allow SELECT, INSERT, UPDATE, DELETE
       const normalized = query.trim().toUpperCase();
-      const allowedOps = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH'];
+      const allowedOps = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH', 'CREATE', 'ALTER'];
       const isAllowed = allowedOps.some((op) => normalized.startsWith(op));
 
       if (!isAllowed) {
@@ -46,12 +46,12 @@ export async function registerQueryRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      // Block DDL and dangerous operations
-      const blocked = ['DROP', 'ALTER', 'TRUNCATE', 'CREATE', 'GRANT', 'REVOKE'];
+      // Block destructive operations only
+      const blocked = ['DROP', 'TRUNCATE', 'GRANT', 'REVOKE'];
       const hasBlocked = blocked.some((kw) => normalized.includes(kw));
       if (hasBlocked) {
         return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: 'DDL operations are not allowed' },
+          error: { code: 'FORBIDDEN', message: 'Destructive DDL (DROP, TRUNCATE, GRANT, REVOKE) not allowed via API' },
         });
       }
 
