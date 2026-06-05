@@ -2,8 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { createHash, createHmac } from 'node:crypto';
 import { masterPool } from '../db.ts';
 import { authMiddleware } from '../auth/middleware.ts';
-import { config } from '../config.ts';
+import { decryptOrNull } from '../auth/encryption.ts';
 import { nanoid } from 'nanoid';
+import type { ProjectR2Config } from '@keel/types';
 
 // AWS Signature V4 for R2 presigned URLs
 // R2 uses the S3-compatible API
@@ -14,16 +15,14 @@ interface PresignedOptions {
   method: string;
   expiresIn: number;
   contentType?: string;
+  endpoint: string; // e.g. https://<accountId>.r2.cloudflarestorage.com
+  accessKeyId: string;
+  secretAccessKey: string;
 }
 
 function generateR2PresignedUrl(options: PresignedOptions): string {
-  const { accountId, accessKeyId, secretAccessKey, publicUrl } = config.r2;
+  const { accessKeyId, secretAccessKey, endpoint } = options;
 
-  if (!accountId || !accessKeyId || !secretAccessKey) {
-    throw new Error('R2 credentials not configured');
-  }
-
-  const endpoint = publicUrl || `https://${accountId}.r2.cloudflarestorage.com`;
   const region = 'auto';
 
   const now = new Date();
@@ -76,6 +75,28 @@ function generateR2PresignedUrl(options: PresignedOptions): string {
   return `https://${hostname}${canonicalUri}?${queryParams.toString()}`;
 }
 
+/**
+ * Fetch and decrypt per-project R2 configuration.
+ */
+async function getProjectR2Config(slug: string, accountId: string): Promise<ProjectR2Config | null> {
+  const { rows } = await masterPool.query(
+    `SELECT r2_access_key_id, r2_secret_access_key, r2_bucket, r2_endpoint, r2_public_url
+     FROM projects WHERE slug = $1 AND account_id = $2`,
+    [slug, accountId],
+  );
+
+  if (rows.length === 0) return null;
+
+  const row = rows[0];
+  return {
+    accessKeyId: decryptOrNull(row.r2_access_key_id) || '',
+    secretAccessKey: decryptOrNull(row.r2_secret_access_key) || '',
+    bucket: decryptOrNull(row.r2_bucket) || '',
+    endpoint: decryptOrNull(row.r2_endpoint),
+    publicUrl: decryptOrNull(row.r2_public_url),
+  };
+}
+
 export async function registerStorageRoutes(app: FastifyInstance): Promise<void> {
   // ─── POST /v1/project/:slug/storage/upload-url ───────────
   app.post(
@@ -94,15 +115,17 @@ export async function registerStorageRoutes(app: FastifyInstance): Promise<void>
         });
       }
 
-      // Verify project ownership
-      const { rows: projects } = await masterPool.query(
-        `SELECT id FROM projects WHERE slug = $1 AND account_id = $2`,
-        [slug, req.accountId],
-      );
-
-      if (projects.length === 0) {
+      // Get per-project R2 config
+      const r2Config = await getProjectR2Config(slug, req.accountId);
+      if (!r2Config) {
         return reply.status(404).send({
           error: { code: 'NOT_FOUND', message: 'Project not found' },
+        });
+      }
+
+      if (!r2Config.accessKeyId || !r2Config.secretAccessKey || !r2Config.bucket) {
+        return reply.status(400).send({
+          error: { code: 'STORAGE_NOT_CONFIGURED', message: 'R2 storage not configured for this project' },
         });
       }
 
@@ -110,11 +133,14 @@ export async function registerStorageRoutes(app: FastifyInstance): Promise<void>
 
       try {
         const uploadUrl = generateR2PresignedUrl({
-          bucket: config.r2.bucket,
+          bucket: r2Config.bucket,
           key: storageKey,
           method: 'PUT',
           expiresIn: 600, // 10 minutes
           contentType: content_type || 'application/octet-stream',
+          endpoint: r2Config.endpoint || `https://${r2Config.accessKeyId}.r2.cloudflarestorage.com`,
+          accessKeyId: r2Config.accessKeyId,
+          secretAccessKey: r2Config.secretAccessKey,
         });
 
         return reply.send({
@@ -148,24 +174,29 @@ export async function registerStorageRoutes(app: FastifyInstance): Promise<void>
         });
       }
 
-      // Verify project ownership
-      const { rows: projects } = await masterPool.query(
-        `SELECT id FROM projects WHERE slug = $1 AND account_id = $2`,
-        [slug, req.accountId],
-      );
-
-      if (projects.length === 0) {
+      // Get per-project R2 config
+      const r2Config = await getProjectR2Config(slug, req.accountId);
+      if (!r2Config) {
         return reply.status(404).send({
           error: { code: 'NOT_FOUND', message: 'Project not found' },
         });
       }
 
+      if (!r2Config.accessKeyId || !r2Config.secretAccessKey || !r2Config.bucket) {
+        return reply.status(400).send({
+          error: { code: 'STORAGE_NOT_CONFIGURED', message: 'R2 storage not configured for this project' },
+        });
+      }
+
       try {
         const downloadUrl = generateR2PresignedUrl({
-          bucket: config.r2.bucket,
+          bucket: r2Config.bucket,
           key,
           method: 'GET',
           expiresIn: 600,
+          endpoint: r2Config.endpoint || `https://${r2Config.accessKeyId}.r2.cloudflarestorage.com`,
+          accessKeyId: r2Config.accessKeyId,
+          secretAccessKey: r2Config.secretAccessKey,
         });
 
         return reply.send({

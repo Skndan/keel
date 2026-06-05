@@ -2,11 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { masterPool, getProjectPool, removeProjectPool } from '../db.ts';
 import { authMiddleware } from '../auth/middleware.ts';
+import { encryptOrNull } from '../auth/encryption.ts';
 import { nanoid } from 'nanoid';
 import { runMigrations } from '@keel/db/src/runner.ts';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import type { CreateProjectRequest } from '@keel/types';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_DIR = join(__dirname, '..', '..', '..', 'db', 'templates');
@@ -41,7 +43,7 @@ function generateDbPassword(): string {
 export async function registerProjectRoutes(app: FastifyInstance): Promise<void> {
   // ─── POST /v1/projects — Create a new project ────────────
   app.post('/v1/projects', { preHandler: [authMiddleware] }, async (req, reply) => {
-    const { name } = req.body as { name?: string };
+    const { name, ...opts } = req.body as CreateProjectRequest;
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return reply.status(400).send({
@@ -95,12 +97,26 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
         migrationsDir: TEMPLATE_DIR,
       });
 
-      // Insert project record
+      // Insert project record with optional OAuth + R2 configs (encrypted)
       const { rows: projects } = await client.query(
-        `INSERT INTO projects (account_id, name, slug, db_name, db_user, api_key_hash)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO projects (
+           account_id, name, slug, db_name, db_user, api_key_hash,
+           google_client_id, google_client_secret, github_client_id, github_client_secret,
+           r2_access_key_id, r2_secret_access_key, r2_bucket, r2_endpoint, r2_public_url
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          RETURNING id, name, slug, created_at`,
-        [req.accountId, name.trim(), slug, dbName, dbUser, apiKeyHash],
+        [
+          req.accountId, name.trim(), slug, dbName, dbUser, apiKeyHash,
+          encryptOrNull(opts.google_client_id),
+          encryptOrNull(opts.google_client_secret),
+          encryptOrNull(opts.github_client_id),
+          encryptOrNull(opts.github_client_secret),
+          encryptOrNull(opts.r2_access_key_id),
+          encryptOrNull(opts.r2_secret_access_key),
+          encryptOrNull(opts.r2_bucket),
+          encryptOrNull(opts.r2_endpoint),
+          encryptOrNull(opts.r2_public_url),
+        ],
       );
 
       await client.query('COMMIT');

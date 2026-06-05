@@ -1,121 +1,244 @@
 import pg from 'pg';
-import type { JobPayload } from '@keel/types';
+import { processWebhooks } from './webhook.ts';
+import { processAuditEvents } from './audit.ts';
+import { shouldRun } from './scheduler.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://keel:keel_dev@localhost:5432/keel_master';
-const POLL_INTERVAL_MS = 5000; // 5 seconds
-const BATCH_SIZE = 10;
+const HEALTH_PORT = parseInt(process.env.HEALTH_PORT || '3002', 10);
 
-const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 5 });
+// ─── PostgreSQL pool ──────────────────────────────────
+
+const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 10 });
+
+// ─── Scheduler state ──────────────────────────────────
+
+interface ScheduledJob {
+  id: string;
+  cron: string;
+  handler: string;
+  project?: string;
+  data?: Record<string, unknown>;
+  lastRun: number; // timestamp
+}
+
+const scheduledJobs = new Map<string, ScheduledJob>();
 
 /**
- * Registered job handlers.
+ * Register a scheduled job.
  */
-const handlers = new Map<string, (job: JobPayload) => Promise<void>>();
-
-export function registerHandler(type: string, handler: (job: JobPayload) => Promise<void>): void {
-  handlers.set(type, handler);
+export function scheduleJob(
+  id: string,
+  cron: string,
+  handler: string,
+  project?: string,
+  data?: Record<string, unknown>,
+): void {
+  scheduledJobs.set(id, {
+    id,
+    cron,
+    handler,
+    project,
+    data,
+    lastRun: 0,
+  });
 }
 
 /**
- * Poll pgmq for jobs and dispatch to handlers.
+ * Run the scheduler tick — check all registered jobs.
  */
-async function pollQueue(): Promise<void> {
-  try {
-    // Ensure the queue exists
-    await pool.query(`
-      SELECT pgmq.create('keel_jobs')
-      WHERE NOT EXISTS (
-        SELECT 1 FROM pgmq.list_queues() WHERE queue_name = 'keel_jobs'
-      )
-    `);
+async function runScheduler(): Promise<number> {
+  let triggered = 0;
+  const now = new Date();
+  const nowMinute = Math.floor(now.getTime() / 60000); // truncate to minute
 
-    // Read batch of messages
-    const { rows } = await pool.query(
-      `SELECT * FROM pgmq.read('keel_jobs', $1, $2)`,
-      [BATCH_SIZE, 60], // vt = 60 seconds visibility timeout
-    );
+  for (const job of scheduledJobs.values()) {
+    try {
+      if (shouldRun(job.cron, now) && job.lastRun < nowMinute * 60000) {
+        console.log(`🕐 Scheduler: triggering ${job.handler} (${job.cron})`);
 
-    if (rows.length === 0) return;
+        // Execute the handler function
+        await executeHandler(job.handler, {
+          type: 'scheduled',
+          data: job.data || {},
+          cron: job.cron,
+          project: job.project,
+          fired_at: now.toISOString(),
+        });
 
-    console.log(`📦 Processing ${rows.length} job(s)`);
-
-    for (const row of rows) {
-      const msgId = row.msg_id;
-      let payload: JobPayload;
-
-      try {
-        payload = typeof row.message === 'string' ? JSON.parse(row.message) : row.message;
-      } catch {
-        console.error(`  ✗ Invalid message format for msg_id=${msgId}`);
-        continue;
+        job.lastRun = Date.now();
+        triggered++;
       }
-
-      const handler = handlers.get(payload.type);
-
-      if (!handler) {
-        console.warn(`  ⚠ No handler for job type: ${payload.type}`);
-        await pool.query(`SELECT pgmq.archive('keel_jobs', $1)`, [msgId]);
-        continue;
-      }
-
-      try {
-        await handler(payload);
-        await pool.query(`SELECT pgmq.archive('keel_jobs', $1)`, [msgId]);
-        console.log(`  ✓ ${payload.type} (msg_id=${msgId})`);
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`  ✗ ${payload.type} failed: ${message}`);
-        // Don't archive on failure — it will be retried after VT expires
-      }
+    } catch (err) {
+      console.error(
+        `  ✗ Scheduler ${job.id} error:`,
+        err instanceof Error ? err.message : String(err),
+      );
     }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('Poll error:', message);
+  }
+
+  return triggered;
+}
+
+/**
+ * Execute a named handler function.
+ */
+async function executeHandler(
+  handler: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  switch (handler) {
+    case 'cleanup_expired_tokens': {
+      // Clean up expired refresh tokens
+      const { rowCount } = await pool.query(
+        'DELETE FROM refresh_tokens WHERE expires_at < now()',
+      );
+      console.log(`  ✓ Cleaned up ${rowCount} expired tokens`);
+      break;
+    }
+    case 'cleanup_expired_states': {
+      // Clean up expired OAuth states
+      const { rowCount } = await pool.query(
+        "DELETE FROM oauth_states WHERE created_at < now() - interval '10 minutes'",
+      );
+      console.log(`  ✓ Cleaned up ${rowCount} expired OAuth states`);
+      break;
+    }
+    case 'health_check': {
+      // Simple health check ping
+      await pool.query('SELECT 1');
+      console.log('  ✓ Health check: DB connection OK');
+      break;
+    }
+    case 'log': {
+      console.log(`  📝 [scheduled:${handler}]:`, payload.data);
+      break;
+    }
+    default:
+      console.warn(`  ⚠ Unknown handler: ${handler}`);
   }
 }
 
-/**
- * Send a job to the queue.
- */
-export async function enqueue(job: JobPayload): Promise<void> {
-  await pool.query(
-    `SELECT pgmq.send('keel_jobs', $1)`,
-    [JSON.stringify(job)],
-  );
+// ─── Main loop ────────────────────────────────────────
+
+let running = true;
+let tickCount = 0;
+
+async function tick(): Promise<void> {
+  tickCount++;
+  const startTime = Date.now();
+
+  try {
+    // 1. Process webhooks
+    const webhooksProcessed = await processWebhooks(pool);
+    if (webhooksProcessed > 0) {
+      console.log(`📨 Processed ${webhooksProcessed} webhook(s) on tick #${tickCount}`);
+    }
+
+    // 2. Process audit events
+    const auditProcessed = await processAuditEvents(pool);
+    if (auditProcessed > 0) {
+      console.log(`📋 Processed ${auditProcessed} audit event(s) on tick #${tickCount}`);
+    }
+
+    // 3. Run scheduler (check every tick = every 5s)
+    const scheduledTriggered = await runScheduler();
+    if (scheduledTriggered > 0) {
+      console.log(`🕐 Triggered ${scheduledTriggered} scheduled job(s) on tick #${tickCount}`);
+    }
+
+    const elapsed = Date.now() - startTime;
+    if (tickCount % 12 === 0) { // log every ~60s
+      console.log(
+        `⏱️  Tick #${tickCount} completed in ${elapsed}ms (webhooks=${webhooksProcessed}, audit=${auditProcessed}, scheduled=${scheduledTriggered})`,
+      );
+    }
+  } catch (err) {
+    console.error(
+      `❌ Tick #${tickCount} error:`,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  if (running) {
+    setTimeout(tick, 5000); // run every 5 seconds
+  }
 }
 
-// ─── Default handlers ───────────────────────────────────
+// ─── Health HTTP server ───────────────────────────────
 
-registerHandler('log', async (job) => {
-  console.log(`📝 [${job.project_id || 'system'}]:`, job.data);
+const healthServer = Bun.serve({
+  port: HEALTH_PORT,
+  fetch(req) {
+    const url = new URL(req.url);
+
+    const healthData = {
+      status: running ? 'ok' : 'shutting_down',
+      uptime: process.uptime(),
+      tick_count: tickCount,
+      scheduled_jobs: scheduledJobs.size,
+      db_connected: true,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (url.pathname === '/health') {
+      return new Response(JSON.stringify(healthData), {
+        status: running ? 200 : 503,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.pathname === '/health/db') {
+      // Check DB connectivity
+      pool.query('SELECT 1')
+        .then(() => {
+          // Response already sent below if async
+        })
+        .catch(() => {
+          healthData.db_connected = false;
+          healthData.status = 'degraded';
+        });
+
+      return new Response(JSON.stringify(healthData), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response('Keel Worker', {
+      headers: { 'Content-Type': 'text/plain' },
+    });
+  },
 });
 
-registerHandler('webhook', async (job) => {
-  const { url, method = 'POST', body, headers } = job.data;
-  if (!url) return;
-  console.log(`🌐 Webhook ${method} ${url}`);
-  await fetch(url as string, {
-    method: method as string,
-    headers: headers as Record<string, string> || { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-});
+// ─── Start ────────────────────────────────────────────
 
-// ─── Start ──────────────────────────────────────────────
+console.log(`⚙️  Keel Worker v0.2 started`);
 
-console.log('⚙️  Keel Worker started');
+// Register default scheduled jobs
+scheduleJob('cleanup-tokens', '0 * * * *', 'cleanup_expired_tokens');
+scheduleJob('cleanup-states', '*/10 * * * *', 'cleanup_expired_states');
+scheduleJob('health-check', '*/5 * * * *', 'health_check');
 
-async function run(): Promise<void> {
-  await pollQueue();
-  setTimeout(run, POLL_INTERVAL_MS);
+// Connect to DB
+try {
+  await pool.query('SELECT 1');
+  console.log('📊 DB connection established');
+} catch (err) {
+  console.error('Failed to connect to DB:', err);
+  process.exit(1);
 }
 
-run().catch(console.error);
+console.log(`❤️  Health server on http://0.0.0.0:${HEALTH_PORT}`);
 
-// ─── Graceful shutdown ──────────────────────────────────
+// Start the main loop
+setTimeout(tick, 1000);
+
+// ─── Graceful shutdown ────────────────────────────────
+
 const shutdown = async () => {
   console.log('\nShutting down worker...');
+  running = false;
   await pool.end();
+  healthServer.stop();
   process.exit(0);
 };
 

@@ -45,8 +45,27 @@ export interface ProjectRecord {
   db_name: string;
   db_user: string;
   api_key_hash: string;
+  // Per-project OAuth (encrypted)
+  google_client_id: string | null;
+  google_client_secret: string | null;
+  github_client_id: string | null;
+  github_client_secret: string | null;
+  // Per-project R2 (encrypted)
+  r2_access_key_id: string | null;
+  r2_secret_access_key: string | null;
+  r2_bucket: string | null;
+  r2_endpoint: string | null;
+  r2_public_url: string | null;
   created_at: Date;
   updated_at: Date;
+}
+
+export interface ProjectR2Config {
+  accessKeyId: string;
+  secretAccessKey: string;
+  bucket: string;
+  endpoint: string | null;
+  publicUrl: string | null;
 }
 
 export interface ApiKeyPayload {
@@ -73,12 +92,38 @@ export interface ApiError {
   };
 }
 
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
 export interface MeResponse {
   id: string;
   email: string;
   name: string;
   avatar_url: string | null;
   provider: string;
+}
+
+export interface CreateProjectRequest {
+  name: string;
+  // Optional per-project OAuth + R2 configs
+  google_client_id?: string;
+  google_client_secret?: string;
+  github_client_id?: string;
+  github_client_secret?: string;
+  r2_access_key_id?: string;
+  r2_secret_access_key?: string;
+  r2_bucket?: string;
+  r2_endpoint?: string;
+  r2_public_url?: string;
 }
 
 export interface ProjectResponse {

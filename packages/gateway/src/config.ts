@@ -15,22 +15,9 @@ export const config = {
   accessTokenExpiry: '15 minutes',
   refreshTokenExpiry: '30 days',
 
-  // OAuth - Google
-  googleClientId: process.env.GOOGLE_CLIENT_ID || '',
-  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-
-  // OAuth - GitHub
-  githubClientId: process.env.GITHUB_CLIENT_ID || '',
-  githubClientSecret: process.env.GITHUB_CLIENT_SECRET || '',
-
-  // Cloudflare R2
-  r2: {
-    accountId: process.env.R2_ACCOUNT_ID || '',
-    accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
-    bucket: process.env.R2_BUCKET || 'keel-storage',
-    publicUrl: process.env.R2_PUBLIC_URL || '',
-  },
+  // Admin dashboard credentials (email/password login, not OAuth)
+  adminEmail: process.env.ADMIN_EMAIL || 'admin@keel.dev',
+  adminPassword: process.env.ADMIN_PASSWORD || 'admin',
 
   // Application
   baseUrl: process.env.BASE_URL || 'http://localhost',
