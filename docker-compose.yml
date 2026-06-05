@@ -75,6 +75,7 @@ services:
       - "80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./packages/dashboard/dist:/usr/share/nginx/html:ro
     restart: unless-stopped
 
 volumes:
