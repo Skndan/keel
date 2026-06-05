@@ -171,6 +171,61 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
     return reply.send({ data: rows[0] });
   });
 
+  // ─── PATCH /v1/projects/:slug — Update project settings ──
+  app.patch('/v1/projects/:slug', { preHandler: [authMiddleware] }, async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const body = req.body as Record<string, string | undefined>;
+
+    // Build SET clause from allowed config fields
+    const allowedFields: Record<string, string> = {
+      google_client_id: encryptOrNull(body.google_client_id),
+      google_client_secret: encryptOrNull(body.google_client_secret),
+      github_client_id: encryptOrNull(body.github_client_id),
+      github_client_secret: encryptOrNull(body.github_client_secret),
+      r2_access_key_id: encryptOrNull(body.r2_access_key_id),
+      r2_secret_access_key: encryptOrNull(body.r2_secret_access_key),
+      r2_bucket: encryptOrNull(body.r2_bucket),
+      r2_endpoint: encryptOrNull(body.r2_endpoint),
+      r2_public_url: encryptOrNull(body.r2_public_url),
+    };
+
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    let paramIdx = 1;
+
+    for (const [key, val] of Object.entries(allowedFields)) {
+      if (val !== undefined) {
+        sets.push(`${key} = $${paramIdx}`);
+        values.push(val);
+        paramIdx++;
+      }
+    }
+
+    if (sets.length === 0) {
+      return reply.status(400).send({
+        error: { code: 'BAD_REQUEST', message: 'No valid config fields provided' },
+      });
+    }
+
+    sets.push(`updated_at = now()`);
+
+    // Add slug and account_id as WHERE params
+    values.push(slug, req.accountId);
+
+    const { rowCount } = await masterPool.query(
+      `UPDATE projects SET ${sets.join(', ')} WHERE slug = $${paramIdx} AND account_id = $${paramIdx + 1}`,
+      values,
+    );
+
+    if (rowCount === 0) {
+      return reply.status(404).send({
+        error: { code: 'NOT_FOUND', message: 'Project not found' },
+      });
+    }
+
+    return reply.send({ data: { slug, updated: true } });
+  });
+
   // ─── DELETE /v1/projects/:slug — Delete project ──────────
   app.delete('/v1/projects/:slug', { preHandler: [authMiddleware] }, async (req, reply) => {
     const { slug } = req.params as { slug: string };
