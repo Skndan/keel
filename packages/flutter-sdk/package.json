@@ -1,10 +1,10 @@
 {
   "name": "@keel/flutter-sdk",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Keel Flutter SDK - client library for Flutter apps",
+  "description": "Keel Flutter SDK — client library for Flutter apps (BaaS)",
   "scripts": {
-    "build": "echo 'Flutter SDK: run flutter pub get && flutter build'",
+    "build": "echo 'Flutter SDK: run flutter pub get && flutter analyze'",
     "test": "echo 'Flutter SDK: run flutter test'",
     "clean": "rm -rf build .dart_tool"
   }
